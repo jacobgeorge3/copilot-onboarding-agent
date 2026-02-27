@@ -1,0 +1,357 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "Onboarding Agent API",
+    "description": "Backend API for a Copilot Studio agent that guides new employees through structured onboarding workflows. Consumed by a Power Platform custom connector.",
+    "version": "1.0.0",
+    "contact": {
+      "name": "Jacob George",
+      "url": "https://jacobgeorge3.github.io/"
+    }
+  },
+  "host": "YOUR-APP-NAME.azurewebsites.net",
+  "basePath": "/",
+  "schemes": ["https"],
+  "produces": ["application/json"],
+  "consumes": ["application/json"],
+  "securityDefinitions": {
+    "apiKey": {
+      "type": "apiKey",
+      "name": "X-API-Key",
+      "in": "header",
+      "description": "API key for authenticating requests. Set this value in the custom connector's security tab."
+    }
+  },
+  "security": [
+    {
+      "apiKey": []
+    }
+  ],
+  "paths": {
+    "/employee/{name}": {
+      "get": {
+        "operationId": "GetEmployee",
+        "summary": "Get employee record by first name",
+        "description": "Retrieves a mock employee record for personalized agent greeting. Called at conversation start so the Copilot Studio agent can greet the user by name, identify their department, and skip redundant questions.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "description": "The employee's first name. Case-insensitive. Example: 'Jacob'."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Employee record found.",
+            "schema": {
+              "$ref": "#/definitions/Employee"
+            }
+          },
+          "404": {
+            "description": "No employee found with that name. The agent should fall back to asking the user for their department manually.",
+            "schema": {
+              "$ref": "#/definitions/ErrorResponse"
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key.",
+            "schema": {
+              "$ref": "#/definitions/ErrorResponse"
+            }
+          }
+        },
+        "security": [{ "apiKey": [] }]
+      }
+    },
+    "/onboarding/{department}": {
+      "get": {
+        "operationId": "GetOnboardingTasks",
+        "summary": "Get onboarding task checklist by department",
+        "description": "Retrieves the ordered onboarding task checklist for a new employee based on their department. Each task includes a title, description, and completion status. Called by the Copilot Studio agent to begin the checklist conversation.",
+        "parameters": [
+          {
+            "name": "department",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "description": "The employee's department. Valid values: Engineering, Sales, Marketing, HR. Case-insensitive."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Task checklist for the department.",
+            "schema": {
+              "$ref": "#/definitions/OnboardingResponse"
+            }
+          },
+          "404": {
+            "description": "Department not recognized. Response includes valid department names.",
+            "schema": {
+              "$ref": "#/definitions/ErrorResponse"
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key.",
+            "schema": {
+              "$ref": "#/definitions/ErrorResponse"
+            }
+          }
+        },
+        "security": [{ "apiKey": [] }]
+      }
+    },
+    "/complete-task": {
+      "post": {
+        "operationId": "CompleteTask",
+        "summary": "Mark an onboarding task as complete",
+        "description": "Marks a specific onboarding task as complete and returns the updated progress including completion percentage and the next incomplete task. Called by the Copilot Studio agent when the user confirms they have finished a step.",
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CompleteTaskRequest"
+            },
+            "description": "The task ID and department of the task to mark complete."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Task marked complete. Returns updated progress.",
+            "schema": {
+              "$ref": "#/definitions/CompleteTaskResponse"
+            }
+          },
+          "400": {
+            "description": "Missing or invalid fields in request body.",
+            "schema": {
+              "$ref": "#/definitions/ErrorResponse"
+            }
+          },
+          "404": {
+            "description": "Task ID or department not found.",
+            "schema": {
+              "$ref": "#/definitions/ErrorResponse"
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key.",
+            "schema": {
+              "$ref": "#/definitions/ErrorResponse"
+            }
+          }
+        },
+        "security": [{ "apiKey": [] }]
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "HealthCheck",
+        "summary": "API health check",
+        "description": "Returns 200 OK if the API is running. Used by Azure App Service for availability monitoring. Does not require authentication.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "API is healthy.",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "example": "ok"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "Employee": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Employee first name.",
+          "example": "Jacob"
+        },
+        "full_name": {
+          "type": "string",
+          "description": "Employee full name.",
+          "example": "Jacob George"
+        },
+        "department": {
+          "type": "string",
+          "description": "Department the employee belongs to.",
+          "example": "Engineering"
+        },
+        "manager": {
+          "type": "string",
+          "description": "Direct manager's full name.",
+          "example": "Sarah Chen"
+        },
+        "team": {
+          "type": "string",
+          "description": "Team name within the department.",
+          "example": "Platform Infrastructure"
+        },
+        "start_date": {
+          "type": "string",
+          "description": "Employee start date in YYYY-MM-DD format.",
+          "example": "2026-03-01"
+        },
+        "office": {
+          "type": "string",
+          "description": "Office location or Remote.",
+          "example": "Remote"
+        }
+      }
+    },
+    "Task": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique task identifier.",
+          "example": "eng_001"
+        },
+        "title": {
+          "type": "string",
+          "description": "Short task title.",
+          "example": "Set up development environment"
+        },
+        "description": {
+          "type": "string",
+          "description": "Detailed instructions for completing the task.",
+          "example": "Install VS Code, Docker, Git, and clone the team repository."
+        },
+        "order": {
+          "type": "integer",
+          "description": "Sequence order within the department checklist.",
+          "example": 1
+        },
+        "completed": {
+          "type": "boolean",
+          "description": "Whether this task has been marked complete in the current session.",
+          "example": false
+        }
+      }
+    },
+    "OnboardingResponse": {
+      "type": "object",
+      "properties": {
+        "department": {
+          "type": "string",
+          "description": "Department name (title case).",
+          "example": "Engineering"
+        },
+        "tasks": {
+          "type": "array",
+          "description": "Ordered list of onboarding tasks with completion state.",
+          "items": {
+            "$ref": "#/definitions/Task"
+          }
+        },
+        "total_tasks": {
+          "type": "integer",
+          "description": "Total number of tasks in the checklist.",
+          "example": 4
+        },
+        "completion_percentage": {
+          "type": "integer",
+          "description": "Percentage of tasks completed (0-100).",
+          "example": 0
+        },
+        "next_task": {
+          "description": "The next incomplete task, or null if all are done.",
+          "$ref": "#/definitions/Task"
+        }
+      }
+    },
+    "CompleteTaskRequest": {
+      "type": "object",
+      "required": ["task_id", "department"],
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "description": "ID of the task to mark complete. Example: 'eng_001'.",
+          "example": "eng_001"
+        },
+        "department": {
+          "type": "string",
+          "description": "Department the task belongs to. Example: 'Engineering'.",
+          "example": "Engineering"
+        }
+      }
+    },
+    "CompleteTaskResponse": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "description": "ID of the completed task.",
+          "example": "eng_001"
+        },
+        "completed": {
+          "type": "boolean",
+          "description": "Always true on success.",
+          "example": true
+        },
+        "department": {
+          "type": "string",
+          "description": "Department name (title case).",
+          "example": "Engineering"
+        },
+        "completion_percentage": {
+          "type": "integer",
+          "description": "Updated completion percentage (0-100).",
+          "example": 25
+        },
+        "remaining_tasks": {
+          "type": "integer",
+          "description": "Number of tasks still incomplete.",
+          "example": 3
+        },
+        "all_complete": {
+          "type": "boolean",
+          "description": "True when all tasks in the department are complete.",
+          "example": false
+        },
+        "next_task": {
+          "description": "The next incomplete task, or null if all are done.",
+          "$ref": "#/definitions/Task"
+        }
+      }
+    },
+    "ErrorResponse": {
+      "type": "object",
+      "description": "Structured error response. All API errors use this schema so Copilot Studio can parse failures and route to a fallback topic.",
+      "properties": {
+        "error": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "description": "Machine-readable error code.",
+              "example": "DEPARTMENT_NOT_FOUND"
+            },
+            "message": {
+              "type": "string",
+              "description": "Human-readable error message.",
+              "example": "Department 'xyz' is not recognized. Valid values: Engineering, Sales, Marketing, HR."
+            },
+            "details": {
+              "type": "object",
+              "description": "Additional context, or null.",
+              "x-nullable": true
+            }
+          }
+        }
+      }
+    }
+  }
+}
