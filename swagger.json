@@ -9,7 +9,7 @@
       "url": "https://jacobgeorge3.github.io/"
     }
   },
-  "host": "YOUR-APP-NAME.azurewebsites.net",
+  "host": "autohire-g8gbfzh4cfa2bdh2.centralus-01.azurewebsites.net",
   "basePath": "/",
   "schemes": ["https"],
   "produces": ["application/json"],
