@@ -45,6 +45,18 @@ app = Flask(__name__)
 
 with app.app_context():
     init_db()
+    # Auto-seed on first startup: if the departments table is empty, populate
+    # all departments, tasks, and employees from seed.py. Safe to run on every
+    # startup — seed_all() skips rows that already exist.
+    from models import Department
+    from seed import seed_all
+    _db = db_session()
+    if _db.query(Department).count() == 0:
+        app.logger.info("Database is empty — running initial seed.")
+        seed_all(_db)
+    else:
+        app.logger.info("Database already seeded — skipping.")
+    db_session.remove()
 
 
 @app.teardown_appcontext
