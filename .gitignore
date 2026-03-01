@@ -21,3 +21,6 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+
+# SQLite local dev database (never commit — production uses Azure SQL via DATABASE_URL)
+onboarding_dev.db

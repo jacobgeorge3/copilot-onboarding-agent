@@ -1,2 +1,10 @@
 flask==3.1.0
 gunicorn==23.0.0
+
+# Data persistence
+SQLAlchemy>=2.0.0
+
+# Azure SQL driver (required in production when DATABASE_URL points to Azure SQL).
+# Azure App Service Linux (Python 3.12) ships with the ODBC Driver for SQL Server.
+# For local dev with SQLite the default, pyodbc is not needed.
+pyodbc>=4.0.39

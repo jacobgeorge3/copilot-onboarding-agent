@@ -2,7 +2,7 @@
 
 **Author:** Jacob George
 **Role Target:** Microsoft Cloud Solution Architect – AI Business Solutions (Job #200029159)
-**Last Updated:** February 2026
+**Last Updated:** March 2026
 
 ---
 
@@ -14,7 +14,7 @@ This project demonstrates an end-to-end Microsoft AI Workforce solution: a Copil
 
 ## Architecture
 
-### Level 1 — This Build (PoC)
+### Level 1 — This Build (PoC → Persistent PoC)
 
 ```
 Copilot Studio Agent
@@ -23,12 +23,18 @@ Copilot Studio Agent
 Power Platform Custom Connector
       │
       ▼
-Flask API on Azure App Service   ←── Hardcoded data (in-memory)
-      │
+Flask API on Azure App Service   ←── SQLAlchemy ORM (SQLite local / Azure SQL prod)
+      │                                   models.py, database.py, seed.py
       ▼
 Power Automate Flow  ──►  M365 Outlook (welcome email)
                     └───►  Microsoft Planner (task creation)
 ```
+
+**Data Persistence (completed March 2026):**
+Task completion state and employee/task records are now stored in a database via
+SQLAlchemy. Locally this is a zero-config SQLite file. In Azure it connects to
+Azure SQL via the `DATABASE_URL` environment variable. All API contracts are
+identical — the existing Copilot Studio connector requires no changes.
 
 ### Level 2 — Production Single Tenant
 
@@ -70,9 +76,25 @@ Azure Functions (event-driven, scales to zero)
 
 ## Design Decisions
 
-### Hardcoded Data
+### Data Layer — SQLAlchemy with SQLite / Azure SQL
 
-All employee records and task lists are hardcoded Python dictionaries in `app.py`. For a PoC, this is correct — it eliminates database infrastructure, removes setup friction for anyone cloning the repo, and keeps the focus on the integration pattern rather than the data layer. The tradeoff is that data resets on server restart and cannot be edited without a code change. The evolution path to Azure SQL is covered in the Architecture section above.
+Employee records, tasks, and completion state are stored via SQLAlchemy ORM in
+four tables: `departments`, `tasks`, `employees`, `task_completions`. The
+`TaskCompletion` model replaces the former `_completion_store` in-memory dict
+and persists across Azure App Service restarts.
+
+**Local dev (default):** SQLite file (`onboarding_dev.db`) — zero config, no
+extra setup, created automatically on first startup.
+
+**Production (Azure SQL):** Set `DATABASE_URL` in App Service Application
+Settings. The app detects the URL and switches drivers automatically.
+
+**Initial data:** Run `python seed.py` once after provisioning to populate
+all departments, tasks, and employees. Safe to re-run (idempotent).
+
+**Next phase (Entra ID):** When identity-aware auth is added, extend
+`TaskCompletion` with an `employee_id` FK and add an `OnboardingSession` model
+to track per-user onboarding runs. See the Entra ID section below.
 
 ### Plain Flask over flask-restx
 
@@ -257,6 +279,31 @@ Beyond listing endpoints, the following fields are critical for Power Platform:
 
 ## Deployment
 
+### Provision Azure SQL Database (for production persistence)
+
+1. In the Azure Portal, create a new **Azure SQL Database** resource.
+   - Subscription: your existing sub
+   - Resource group: same as the App Service (e.g. `autohire-rg`)
+   - Database name: `onboarding-db`
+   - Server: create new → `autohire-sql.database.windows.net`, SQL auth, set admin user/password
+   - Compute + storage: **Basic** tier (~$5/month) is sufficient for a demo
+2. Under the SQL Server → **Networking**, add a firewall rule to allow Azure services access
+   (toggle: "Allow Azure services and resources to access this server" → On).
+3. Copy the ADO.NET connection string from the portal and reformat it for SQLAlchemy:
+   ```
+   mssql+pyodbc://<user>:<password>@autohire-sql.database.windows.net:1433/onboarding-db
+   ?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=no
+   ```
+4. In Azure App Service → **Configuration → Application Settings**, add:
+   - Name: `DATABASE_URL`
+   - Value: the connection string above
+5. Redeploy (push to `main` triggers GitHub Actions CI/CD).
+6. In Azure App Service → **SSH console** (or Kudu), run once:
+   ```bash
+   python seed.py
+   ```
+   This creates all tables and inserts the initial departments, tasks, and employees.
+
 ### Manual — Azure App Service (Do This First)
 
 1. Create a free Azure account at [azure.microsoft.com/free](https://azure.microsoft.com/free)
@@ -319,7 +366,7 @@ Every push to `main` triggers a deploy. This gives you a working CI/CD story to 
 
 | Concern | PoC Answer | Production Answer |
 |---|---|---|
-| Data persistence | Hardcoded dict | Azure SQL / Dataverse |
+| Data persistence | ~~Hardcoded dict~~ **SQLAlchemy (SQLite/Azure SQL)** ✅ | Dataverse (D365 customers) |
 | Authentication | API key header | Entra ID OAuth 2.0 |
 | Scale | Always-on App Service | Azure Functions (consumption plan) |
 | API governance | Direct connector → API | APIM in front of all backends |
