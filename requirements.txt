@@ -4,7 +4,12 @@ gunicorn==23.0.0
 # Data persistence
 SQLAlchemy>=2.0.0
 
-# Azure SQL driver — only needed when DATABASE_URL points to an Azure SQL / mssql+pyodbc URL.
-# Not required for the default SQLite path. Install separately if switching to Azure SQL:
-#   pip install pyodbc>=4.0.39
+# Entra ID Bearer token validation (auth.py)
+# PyJWT decodes and verifies the JWT signature using the tenant's public keys.
+# cryptography provides the RS256 algorithm support PyJWT requires.
+PyJWT>=2.8.0
+cryptography>=41.0.0
+
+# Azure SQL driver — only needed when DATABASE_URL points to Azure SQL.
+# Not required for the default SQLite path. Uncomment when upgrading to Azure SQL:
 # pyodbc>=4.0.39

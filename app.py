@@ -11,28 +11,31 @@ Endpoints:
     POST /complete-task           - Mark a task complete, return updated progress
     GET  /health                  - Azure App Service health check (no auth)
 
-Authentication:
-    All endpoints (except /health) require the X-API-Key header.
-    Set the API_KEY environment variable in Azure App Service Application Settings.
-    Never hardcode the key value in source.
+Authentication (dual-mode — see auth.py):
+    Mode 1: X-API-Key header (existing connector, unchanged)
+    Mode 2: Authorization: Bearer <Entra ID JWT> (production)
+    Both modes are active simultaneously for zero-downtime migration.
+
+    Required env vars for Bearer token mode:
+        ENTRA_TENANT_ID   Azure AD directory/tenant ID (GUID)
+        ENTRA_CLIENT_ID   Application (client) ID of the app registration
 
 Data persistence:
-    Employee records, tasks, and completion state are stored in a SQLAlchemy-
-    managed database. By default this is a local SQLite file (onboarding_dev.db).
-    In production, set DATABASE_URL to an Azure SQL connection string.
-    Run seed.py once after provisioning the database to load initial data.
+    SQLAlchemy ORM. SQLite by default; Azure SQL via DATABASE_URL env var.
+    Task completions are scoped per user_oid (real Entra oid when using
+    Bearer token; "_api_key" when using the legacy API key).
 
 Error Responses:
-    All errors return structured JSON (never HTML) so Copilot Studio
-    can parse them and route to a fallback topic gracefully.
+    All errors return structured JSON so Copilot Studio can parse them
+    and route to a fallback topic gracefully.
     Schema: { "error": { "code": str, "message": str, "details": any } }
 """
 
 import os
-from functools import wraps
 
 from flask import Flask, jsonify, request
 
+from auth import get_caller_identity, require_auth
 from database import db_session, init_db
 from models import Department, Employee, Task, TaskCompletion
 
@@ -40,18 +43,17 @@ app = Flask(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Database initialisation
+# Database initialisation (runs once at startup)
 # ---------------------------------------------------------------------------
 
 with app.app_context():
     init_db()
-    # Auto-seed on first startup: if the departments table is empty, populate
-    # all departments, tasks, and employees from seed.py. Safe to run on every
-    # startup — seed_all() skips rows that already exist.
-    from models import Department
+    # Auto-seed on first startup: if departments table is empty, populate all
+    # reference data. Safe on every startup — seed_all() skips existing rows.
+    from models import Department as _Dept
     from seed import seed_all
     _db = db_session()
-    if _db.query(Department).count() == 0:
+    if _db.query(_Dept).count() == 0:
         app.logger.info("Database is empty — running initial seed.")
         seed_all(_db)
     else:
@@ -74,51 +76,29 @@ def error_response(code: str, message: str, status: int, details=None):
     return jsonify({"error": {"code": code, "message": message, "details": details}}), status
 
 
-def _get_tasks_for_dept(dept_name: str) -> list[Task]:
-    """Return ordered Task objects for a department, with completion state loaded."""
-    dept = db_session.query(Department).filter_by(name=dept_name.lower()).first()
-    if not dept:
-        return []
-    return dept.tasks  # already ordered by Task.order via relationship
+def _get_completed_task_ids(tasks: list[Task], user_oid: str) -> set[int]:
+    """
+    Return the set of Task.id values already completed by this user_oid.
+    Single bulk query — avoids N+1 per task.
+    """
+    task_ids = [t.id for t in tasks]
+    if not task_ids:
+        return set()
+    completions = (
+        db_session.query(TaskCompletion.task_id)
+        .filter(
+            TaskCompletion.user_oid == user_oid,
+            TaskCompletion.task_id.in_(task_ids),
+        )
+        .all()
+    )
+    return {row.task_id for row in completions}
 
 
-def _completion_percentage(tasks: list[Task]) -> int:
+def _completion_percentage(tasks: list[Task], completed_ids: set[int]) -> int:
     if not tasks:
         return 0
-    completed = sum(1 for t in tasks if t.completed)
-    return round((completed / len(tasks)) * 100)
-
-
-# ---------------------------------------------------------------------------
-# Authentication
-# ---------------------------------------------------------------------------
-
-def require_api_key(f):
-    """
-    Decorator that validates the X-API-Key request header.
-
-    The expected key is read from the API_KEY environment variable.
-    In Azure App Service, set this under Configuration > Application Settings.
-
-    Returns 401 with a structured error body on failure so Copilot Studio
-    can route to a graceful fallback rather than crashing the conversation.
-    """
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        expected = os.environ.get("API_KEY", "")
-        provided = request.headers.get("X-API-Key", "")
-        if not expected:
-            # Fail open during local development when API_KEY is not set.
-            app.logger.warning("API_KEY environment variable is not set. Skipping auth check.")
-            return f(*args, **kwargs)
-        if provided != expected:
-            return error_response(
-                code="UNAUTHORIZED",
-                message="Invalid or missing API key. Provide a valid key in the X-API-Key header.",
-                status=401,
-            )
-        return f(*args, **kwargs)
-    return decorated
+    return round((len(completed_ids) / len(tasks)) * 100)
 
 
 # ---------------------------------------------------------------------------
@@ -136,19 +116,11 @@ def handle_unexpected_error(e):
 
 @app.errorhandler(404)
 def handle_404(e):
-    return error_response(
-        code="NOT_FOUND",
-        message="The requested endpoint does not exist.",
-        status=404,
-    )
+    return error_response(code="NOT_FOUND", message="The requested endpoint does not exist.", status=404)
 
 @app.errorhandler(405)
 def handle_405(e):
-    return error_response(
-        code="METHOD_NOT_ALLOWED",
-        message="HTTP method not allowed on this endpoint.",
-        status=405,
-    )
+    return error_response(code="METHOD_NOT_ALLOWED", message="HTTP method not allowed on this endpoint.", status=405)
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +128,7 @@ def handle_405(e):
 # ---------------------------------------------------------------------------
 
 @app.route("/employee/<string:name>", methods=["GET"])
-@require_api_key
+@require_auth
 def get_employee(name: str):
     """
     GET /employee/<name>
@@ -165,11 +137,8 @@ def get_employee(name: str):
     Called by the Copilot Studio agent at conversation start to personalise
     the greeting and pre-populate department context.
 
-    Path param:
-        name (str): Employee first name. Case-insensitive.
-
-    Returns 200 with employee record or 404 if name not found.
-    On 404, the agent falls back to asking the user for their department manually.
+    When the caller is authenticated via Entra ID Bearer token, the response
+    also includes their identity context so the agent can confirm who's signed in.
     """
     employee = db_session.query(Employee).filter_by(name=name.lower()).first()
     if not employee:
@@ -179,27 +148,35 @@ def get_employee(name: str):
                     f"The agent will ask the user to confirm their department.",
             status=404,
         )
-    return jsonify(employee.to_dict()), 200
+
+    result = employee.to_dict()
+
+    # Enrich with caller identity when available (Entra ID mode only).
+    identity = get_caller_identity()
+    if identity["via_entra"]:
+        result["authenticated_as"] = {
+            "oid": identity["user_oid"],
+            "name": identity["name"],
+            "upn": identity["upn"],
+        }
+
+    return jsonify(result), 200
 
 
 @app.route("/onboarding/<string:department>", methods=["GET"])
-@require_api_key
+@require_auth
 def get_onboarding_tasks(department: str):
     """
     GET /onboarding/<department>
 
     Returns the ordered onboarding task checklist for the given department,
-    with live completion state from the database.
-    Called by the Copilot Studio agent to begin the checklist conversation act.
+    with completion state scoped to the current caller's user_oid.
 
-    Path param:
-        department (str): One of Engineering, Sales, Marketing, HR. Case-insensitive.
-
-    Returns 200 with task list and progress summary, or 404 for unknown departments.
+    API key callers share a global "_api_key" completion state (same behaviour
+    as before persistence was added). Entra ID callers each have independent
+    per-user state — Jacob's progress is separate from Alex's.
     """
-    dept_lower = department.lower()
-    dept = db_session.query(Department).filter_by(name=dept_lower).first()
-
+    dept = db_session.query(Department).filter_by(name=department.lower()).first()
     if not dept:
         valid = [d.name.title() for d in db_session.query(Department).order_by(Department.name).all()]
         return error_response(
@@ -209,33 +186,38 @@ def get_onboarding_tasks(department: str):
             status=404,
         )
 
-    tasks = dept.tasks  # ordered by Task.order via relationship
-    next_task = next((t for t in tasks if not t.completed), None)
+    identity = get_caller_identity()
+    user_oid = identity["user_oid"]
+
+    tasks = dept.tasks  # ordered by Task.order
+    completed_ids = _get_completed_task_ids(tasks, user_oid)
+    pct = _completion_percentage(tasks, completed_ids)
+
+    task_dicts = [t.to_dict(completed=t.id in completed_ids) for t in tasks]
+    next_task = next((t for t in tasks if t.id not in completed_ids), None)
 
     return jsonify({
         "department": department.title(),
-        "tasks": [t.to_dict() for t in tasks],
+        "tasks": task_dicts,
         "total_tasks": len(tasks),
-        "completion_percentage": _completion_percentage(tasks),
-        "next_task": next_task.to_dict() if next_task else None,
+        "completion_percentage": pct,
+        "next_task": next_task.to_dict(completed=False) if next_task else None,
     }), 200
 
 
 @app.route("/complete-task", methods=["POST"])
-@require_api_key
+@require_auth
 def complete_task():
     """
     POST /complete-task
 
-    Marks a task as complete in the database and returns the updated task list
-    with new completion percentage and the next incomplete task.
-    Called by the Copilot Studio agent when the user confirms a step is done.
+    Marks a task as complete for the current caller and returns updated progress.
+    Scoped to the caller's user_oid — each Entra ID user has independent state.
+    Idempotent: marking an already-completed task is a no-op.
 
     Request body (JSON):
         task_id    (str): ID of the task to mark complete (e.g. 'eng_001').
         department (str): Department the task belongs to.
-
-    Returns 200 with updated progress, 400 for missing fields, 404 for unknown task.
     """
     body = request.get_json(silent=True)
     if not body:
@@ -275,27 +257,34 @@ def complete_task():
             status=404,
         )
 
-    # Mark complete — idempotent: do nothing if already completed
-    if not task.completed:
-        completion = TaskCompletion(task_id=task.id)
+    identity = get_caller_identity()
+    user_oid = identity["user_oid"]
+
+    # Mark complete — idempotent: skip if already completed for this user.
+    already_done = (
+        db_session.query(TaskCompletion)
+        .filter_by(task_id=task.id, user_oid=user_oid)
+        .first()
+    )
+    if not already_done:
+        completion = TaskCompletion(task_id=task.id, user_oid=user_oid)
         db_session.add(completion)
         db_session.commit()
-        # Expire cached state so the relationship reflects the new row
-        db_session.expire(task)
 
     # Build updated task list for response
     tasks = dept.tasks
-    next_task = next((t for t in tasks if not t.completed), None)
-    pct = _completion_percentage(tasks)
+    completed_ids = _get_completed_task_ids(tasks, user_oid)
+    pct = _completion_percentage(tasks, completed_ids)
+    next_task = next((t for t in tasks if t.id not in completed_ids), None)
 
     return jsonify({
         "task_id": task_id,
         "completed": True,
         "department": department.title(),
         "completion_percentage": pct,
-        "remaining_tasks": sum(1 for t in tasks if not t.completed),
+        "remaining_tasks": len(tasks) - len(completed_ids),
         "all_complete": pct == 100,
-        "next_task": next_task.to_dict() if next_task else None,
+        "next_task": next_task.to_dict(completed=False) if next_task else None,
     }), 200
 
 
@@ -313,7 +302,6 @@ def health():
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # Local development only. Azure App Service uses gunicorn via startup.txt.
     port = int(os.environ.get("PORT", 5000))
     debug = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
     app.run(host="0.0.0.0", port=port, debug=debug)

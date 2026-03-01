@@ -1,16 +1,21 @@
 """
-models.py — SQLAlchemy ORM models for the Copilot Studio Onboarding Agent.
+models.py — SQLAlchemy ORM models for the Onboarding Agent API.
 
 Tables:
     departments      — Department records (engineering, sales, marketing, hr)
     tasks            — Onboarding task definitions, scoped per department
-    employees        — Employee records used for agent personalization
-    task_completions — Persistent record of completed tasks (replaces _completion_store)
+    employees        — Employee records used for agent personalisation
+    task_completions — Persistent completion records, scoped per user_oid
 
-Phase 2 note (Entra ID):
-    When Entra ID auth is added, extend TaskCompletion with an `employee_id` FK
-    so completions are scoped per user instead of globally per task.
-    Also add OnboardingSession to track a user's full onboarding run.
+Per-user completion scoping:
+    task_completions.user_oid stores the caller's identity:
+        - Entra ID Bearer token:  real oid GUID (per-user state)
+        - API key auth:           "_api_key"  (global shared state, legacy)
+        - Local dev (no key):     "_dev"
+
+    Route handlers do a bulk lookup of completed task IDs for the current
+    user_oid rather than relying on a model-level relationship, since the
+    ORM can't filter a relationship by request context automatically.
 """
 
 from datetime import datetime
@@ -40,6 +45,10 @@ class Task(Base):
     """
     One row per onboarding task. task_key is the stable identifier used by the
     Copilot Studio agent (e.g. "eng_001"). Unique across all departments.
+
+    Completion state is NOT stored on this model — it is user-scoped and lives
+    in TaskCompletion. Route handlers look up completed task IDs for the current
+    caller and pass `completed=True/False` into to_dict() explicitly.
     """
 
     __tablename__ = "tasks"
@@ -52,32 +61,28 @@ class Task(Base):
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=False)
 
     department = relationship("Department", back_populates="tasks")
-    # uselist=False → one-to-one: a task is completed at most once (global, pre-Entra ID)
-    completion = relationship("TaskCompletion", back_populates="task", uselist=False)
 
-    @property
-    def completed(self) -> bool:
-        """True when a TaskCompletion row exists for this task."""
-        return self.completion is not None
-
-    def to_dict(self) -> dict:
-        """Serialize to the response schema the agent and connector expect."""
+    def to_dict(self, completed: bool = False) -> dict:
+        """
+        Serialize to the response schema the connector and agent expect.
+        Caller must pass the per-user completed state explicitly.
+        """
         return {
             "id": self.task_key,
             "title": self.title,
             "description": self.description,
             "order": self.order,
-            "completed": self.completed,
+            "completed": completed,
         }
 
     def __repr__(self) -> str:
-        return f"<Task key={self.task_key!r} completed={self.completed}>"
+        return f"<Task key={self.task_key!r}>"
 
 
 class Employee(Base):
     """
-    Employee record used for personalized agent greetings.
-    name is stored lowercase (first name only) to match case-insensitive URL lookups.
+    Employee record used for personalised agent greetings.
+    name stored lowercase (first name only) to match case-insensitive URL lookups.
     """
 
     __tablename__ = "employees"
@@ -106,28 +111,32 @@ class Employee(Base):
         }
 
     def __repr__(self) -> str:
-        return f"<Employee name={self.name!r} dept={self.department_id}>"
+        return f"<Employee name={self.name!r}>"
 
 
 class TaskCompletion(Base):
     """
-    Persistent replacement for the in-memory _completion_store dict.
+    One row per (task, user) completion event.
 
-    One row per completed task. Inserting a row marks the task complete;
-    deleting it (future reset endpoint) marks it incomplete again.
+    user_oid scopes completions to a specific caller:
+        - Real Entra ID oid (GUID) when the request uses a Bearer token.
+        - "_api_key" when the request uses the legacy X-API-Key header.
+        - "_dev"     in local dev when no API_KEY env var is set.
 
-    Phase 2 — Entra ID: add `employee_id = Column(ForeignKey("employees.id"))`
-    and a composite unique constraint on (task_id, employee_id) so each user
-    has independent completion state.
+    There is intentionally no UNIQUE constraint on (task_id, user_oid) at the
+    DB level — the application layer prevents duplicate insertions via an
+    existence check before inserting. A formal constraint and Alembic migration
+    will be added in a later session.
     """
 
     __tablename__ = "task_completions"
 
     id = Column(Integer, primary_key=True)
-    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False, unique=True)
+    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False)
+    user_oid = Column(String(50), nullable=False, default="_api_key")
     completed_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
-    task = relationship("Task", back_populates="completion")
+    task = relationship("Task")
 
     def __repr__(self) -> str:
-        return f"<TaskCompletion task_id={self.task_id} at={self.completed_at}>"
+        return f"<TaskCompletion task_id={self.task_id} user={self.user_oid!r}>"
