@@ -4,7 +4,7 @@ gunicorn==23.0.0
 # Data persistence
 SQLAlchemy>=2.0.0
 
-# Azure SQL driver (required in production when DATABASE_URL points to Azure SQL).
-# Azure App Service Linux (Python 3.12) ships with the ODBC Driver for SQL Server.
-# For local dev with SQLite the default, pyodbc is not needed.
-pyodbc>=4.0.39
+# Azure SQL driver — only needed when DATABASE_URL points to an Azure SQL / mssql+pyodbc URL.
+# Not required for the default SQLite path. Install separately if switching to Azure SQL:
+#   pip install pyodbc>=4.0.39
+# pyodbc>=4.0.39
