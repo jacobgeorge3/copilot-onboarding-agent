@@ -8,8 +8,8 @@ Lives at: `Projects/copilot-onboarding-agent/`
 ---
 
 ## Current Status
-**All 6 phases complete as of Session 3 — Feb 27, 2026.**
-Project is a working PoC. Next focus: iterative improvement toward a production-grade, business-deployable HR onboarding platform.
+**Session 4 complete — March 1, 2026. Data persistence live.**
+Original 6 phases done (PoC). Now iterating toward production-grade. Task completion state and all data now persists across server restarts via SQLAlchemy + SQLite (auto-seeded on first startup). Next priority: Entra ID authentication.
 
 ---
 
@@ -74,10 +74,9 @@ Project is a working PoC. Next focus: iterative improvement toward a production-
 
 ---
 
-## Known Limitations (PoC)
-- Task completion state is in-memory — resets on Azure App Service restart
-- Only one employee per first name (Jacob, hardcoded)
-- No persistent user sessions — agent starts fresh each conversation
+## Known Limitations
+- ~~Task completion state is in-memory~~ **Fixed Session 4 — SQLAlchemy persistence**
+- Completion state is global (not per-user) — all employees share the same task state until Entra ID is added
 - API key auth only — no Entra ID / identity-aware requests
 - No logging, no observability, no error alerting
 
@@ -87,22 +86,14 @@ Project is a working PoC. Next focus: iterative improvement toward a production-
 
 The goal is to evolve this from a resume project into a genuinely deployable HR onboarding platform that a business could plug into their M365 tenant and use on day one.
 
-Work items are grouped by theme and roughly ordered by impact vs. effort. Tackle them in any order but prioritize **Data Persistence** and **Auth** first — everything else builds on those two.
+Work items are grouped by theme and roughly ordered by impact vs. effort. **Data Persistence is done.** Next priority is Auth — everything else builds on those two.
 
 ---
 
-### 1. Data Persistence (High Priority)
-**The problem:** In-memory state means every server restart wipes all task progress. Not viable for real onboarding.
+### 1. Data Persistence ✅ DONE — Session 4, March 1 2026
+SQLAlchemy ORM with SQLite (local/Azure default). Models: `Department`, `Task`, `Employee`, `TaskCompletion`. Auto-seeds on first startup. Upgrade to Azure SQL anytime by setting `DATABASE_URL` env var — no code changes needed.
 
-**What to do:**
-- Provision an **Azure SQL Database** (Basic tier, ~$5/mo) or use **Azure Cosmos DB** (serverless, cheaper at low volume)
-- Replace the hardcoded Python dicts in `app.py` with SQLAlchemy models: `Employee`, `Department`, `Task`, `OnboardingSession`, `TaskCompletion`
-- `OnboardingSession` tracks one employee's onboarding run — links employee, department, start date, and completion status per task
-- Task completions persist across restarts and are tied to a session ID, not just an in-memory dict
-- Add a simple **admin seed script** (`seed.py`) to populate tasks for each department on first deploy
-- Connection string goes in Azure App Service environment variables as `DATABASE_URL`
-
-**Resume/demo upgrade:** The agent now remembers where a user left off. A returning employee can say "what's my next task?" and get the right answer.
+**Remaining gap:** Completion state is global (not per-user). Becomes per-user once Entra ID is added and `TaskCompletion` gets an `employee_id` FK.
 
 ---
 
@@ -200,4 +191,4 @@ Work items are grouped by theme and roughly ordered by impact vs. effort. Tackle
 Mount the `Projects/` folder, open a new conversation, and say:
 "Read CONTEXT.md in copilot-onboarding-agent and pick up where we left off."
 
-Suggested first task next session: **Data Persistence** — provision Azure SQL and replace the in-memory dicts. This unblocks everything else on the roadmap.
+**Suggested first task next session: Entra ID Authentication** — register the Flask API as an app in Entra ID, swap the API key decorator for Bearer token validation, and update the custom connector security tab to use OAuth 2.0. This makes the agent identity-aware (no more "what's your name?" — it already knows from the token).
