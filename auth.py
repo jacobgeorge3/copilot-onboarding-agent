@@ -89,14 +89,36 @@ def _validate_bearer_token(token: str) -> Optional[dict]:
         import jwt  # PyJWT
 
         signing_key = jwks_client.get_signing_key_from_jwt(token)
-        claims = jwt.decode(
-            token,
-            signing_key.key,
-            algorithms=["RS256"],
-            audience=client_id,
-            issuer=f"https://login.microsoftonline.com/{tenant_id}/v2.0",
-        )
-        return claims
+
+        # Accept both v2.0 and v1.0 issuers — Power Platform's AAD connector
+        # type may use either endpoint depending on how the Authorization URL
+        # is configured. v2.0 tokens have issuer:
+        #   https://login.microsoftonline.com/{tenant}/v2.0
+        # v1.0 tokens (issued when the base auth URL has no version path) have:
+        #   https://sts.windows.net/{tenant}/
+        valid_issuers = [
+            f"https://login.microsoftonline.com/{tenant_id}/v2.0",
+            f"https://sts.windows.net/{tenant_id}/",
+        ]
+
+        last_exc = None
+        for issuer in valid_issuers:
+            try:
+                claims = jwt.decode(
+                    token,
+                    signing_key.key,
+                    algorithms=["RS256"],
+                    audience=client_id,
+                    issuer=issuer,
+                )
+                logger.debug(f"Token validated with issuer: {issuer}")
+                return claims
+            except Exception as exc:
+                last_exc = exc
+                continue
+
+        logger.warning(f"Bearer token validation failed against all issuers: {last_exc}")
+        return None
 
     except Exception as exc:
         logger.warning(f"Bearer token validation failed: {exc}")

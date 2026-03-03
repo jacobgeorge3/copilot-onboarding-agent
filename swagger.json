@@ -15,16 +15,20 @@
   "produces": ["application/json"],
   "consumes": ["application/json"],
   "securityDefinitions": {
-    "apiKey": {
-      "type": "apiKey",
-      "name": "X-API-Key",
-      "in": "header",
-      "description": "API key for authenticating requests. Set this value in the custom connector's security tab."
+    "oauth2_auth": {
+      "type": "oauth2",
+      "flow": "accessCode",
+      "authorizationUrl": "https://login.microsoftonline.com/66ed0ffd-e381-4cfd-b3d9-bd4cce98653c/oauth2/v2.0/authorize",
+      "tokenUrl": "https://login.microsoftonline.com/66ed0ffd-e381-4cfd-b3d9-bd4cce98653c/oauth2/v2.0/token",
+      "scopes": {
+        "api://88e0e8d1-4074-45d8-abf2-a28aee6a0f7e/user_impersonation": "Access Onboarding API on behalf of the signed-in user"
+      },
+      "description": "Entra ID OAuth 2.0 (Authorization Code flow). The custom connector requests a token scoped to this API's app registration on behalf of the signed-in Power Platform user."
     }
   },
   "security": [
     {
-      "apiKey": []
+      "oauth2_auth": ["api://88e0e8d1-4074-45d8-abf2-a28aee6a0f7e/user_impersonation"]
     }
   ],
   "paths": {
@@ -56,13 +60,13 @@
             }
           },
           "401": {
-            "description": "Invalid or missing API key.",
+            "description": "Missing or invalid Entra ID Bearer token.",
             "schema": {
               "$ref": "#/definitions/ErrorResponse"
             }
           }
         },
-        "security": [{ "apiKey": [] }]
+        "security": [{ "oauth2_auth": ["api://88e0e8d1-4074-45d8-abf2-a28aee6a0f7e/user_impersonation"] }]
       }
     },
     "/onboarding/{department}": {
@@ -93,13 +97,13 @@
             }
           },
           "401": {
-            "description": "Invalid or missing API key.",
+            "description": "Missing or invalid Entra ID Bearer token.",
             "schema": {
               "$ref": "#/definitions/ErrorResponse"
             }
           }
         },
-        "security": [{ "apiKey": [] }]
+        "security": [{ "oauth2_auth": ["api://88e0e8d1-4074-45d8-abf2-a28aee6a0f7e/user_impersonation"] }]
       }
     },
     "/complete-task": {
@@ -138,13 +142,13 @@
             }
           },
           "401": {
-            "description": "Invalid or missing API key.",
+            "description": "Missing or invalid Entra ID Bearer token.",
             "schema": {
               "$ref": "#/definitions/ErrorResponse"
             }
           }
         },
-        "security": [{ "apiKey": [] }]
+        "security": [{ "oauth2_auth": ["api://88e0e8d1-4074-45d8-abf2-a28aee6a0f7e/user_impersonation"] }]
       }
     },
     "/health": {
