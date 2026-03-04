@@ -1,13 +1,14 @@
 # Copilot Studio Onboarding Agent — Session Context
 
-## Date: 03/02/2026
-Claude desktop hit this error: Unable to start session. The authentication server returned an error (503). You can try again.
-This is what I prompted you with last: 
-You are failing me right now. I am stopping for the night. Update context.md to where we are in the Entra Auth step. Getting the bug: Bot said:
-Error Message: The connector 'Onboarding Agent API' returned an HTTP error with code 401. Inner Error: Bearer token is invalid or expired. Ensure ENTRA_TENANT_ID and ENTRA_CLIENT_ID are set correctly. Error Code: ConnectorRequestFailure Conversation Id: f39a8c7b-6516-4f03-bb25-f1e3f8acf39c Time (UTC): 2026-03-03T04:03:33.165Z
-In the context.md create a list of screenshots you need from me to verify the status of tyhe tools you don't have access to. This way next session we can properly determine what the roadblock is
+## Date: 03/04/2026
+**Session 5 complete — Entra ID authentication is fully working.**
+Agent is live, identity-aware, and persists task completion state across browser refreshes and session restarts.
 
-We'll start with this next sesh
+### What was fixed this session
+- **Root cause of 401:** `auth.py` was validating the Bearer token's `aud` claim against the bare GUID (`88e0e8d1-...`) but Power Platform issues tokens with audience `api://88e0e8d1-...` (the Application ID URI). PyJWT does an exact match, so validation always failed.
+- **Fix:** Updated `auth.py` to try both `api://<client_id>` and the bare GUID as valid audiences, across both v1.0 and v2.0 issuers (4 combinations). Deployed via GitHub Actions.
+- **Also clarified:** `ENTRA_CLIENT_SECRET` is not needed yet (auth.py uses JWKS public key validation, no secret required). Will be needed when Graph API calls are added. Existing secret in Entra is masked — create a new one at that time and copy the value immediately.
+- **Also clarified:** The "Connect to continue" prompt in Copilot Studio is normal one-time OAuth delegated consent — not a bug.
 
 ## What This Project Is
 A Microsoft AI Workforce solution built to demonstrate Cloud Solution Architect skills for job #200029159.
@@ -17,8 +18,8 @@ Lives at: `Projects/copilot-onboarding-agent/`
 ---
 
 ## Current Status
-**Session 4 complete — March 1, 2026. Data persistence live.**
-Original 6 phases done (PoC). Now iterating toward production-grade. Task completion state and all data now persists across server restarts via SQLAlchemy + SQLite (auto-seeded on first startup). Next priority: Entra ID authentication.
+**Session 5 complete — March 4, 2026. Entra ID authentication live.**
+Original 6 phases done (PoC). Now iterating toward production-grade. Data persists via SQLAlchemy + SQLite. Entra ID Bearer token auth is working — agent is identity-aware. Next priority: Microsoft Graph API integration (real employee data) or Observability (App Insights).
 
 ---
 
@@ -106,7 +107,7 @@ SQLAlchemy ORM with SQLite (local/Azure default). Models: `Department`, `Task`, 
 
 ---
 
-### 2. Authentication & Identity (High Priority)
+### 2. Authentication & Identity ✅ DONE — Session 5, March 4 2026
 **The problem:** A shared API key is not suitable for multi-tenant or enterprise use. Anyone with the key can call the API as any employee.
 
 **What to do:**

@@ -10,6 +10,10 @@ SQLAlchemy>=2.0.0
 PyJWT>=2.8.0
 cryptography>=41.0.0
 
+# Microsoft Graph OBO flow — trades the incoming user Bearer token for a
+# Graph-scoped token so the API can call Graph on behalf of the signed-in user.
+msal>=1.28.0
+
 # Azure SQL driver — only needed when DATABASE_URL points to Azure SQL.
 # Not required for the default SQLite path. Uncomment when upgrading to Azure SQL:
 # pyodbc>=4.0.39

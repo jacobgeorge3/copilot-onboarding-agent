@@ -37,6 +37,7 @@ from flask import Flask, jsonify, request
 
 from auth import get_caller_identity, require_auth
 from database import db_session, init_db
+from graph import get_graph_user
 from models import Department, Employee, Task, TaskCompletion
 
 app = Flask(__name__)
@@ -137,9 +138,44 @@ def get_employee(name: str):
     Called by the Copilot Studio agent at conversation start to personalise
     the greeting and pre-populate department context.
 
-    When the caller is authenticated via Entra ID Bearer token, the response
-    also includes their identity context so the agent can confirm who's signed in.
+    When the caller is authenticated via Entra ID Bearer token, this endpoint
+    first attempts to fetch the user's real profile from Microsoft Graph via
+    the OBO flow. If Graph succeeds, the live directory data is returned.
+    If Graph is unavailable or the OBO exchange fails, it falls back silently
+    to the seeded database record — the agent keeps working either way.
     """
+    identity = get_caller_identity()
+
+    # --- Attempt 1: Microsoft Graph (real directory data via OBO) ---
+    if identity["via_entra"]:
+        auth_header = request.headers.get("Authorization", "")
+        bearer_token = auth_header[len("Bearer "):] if auth_header.startswith("Bearer ") else None
+
+        if bearer_token:
+            graph_data = get_graph_user(bearer_token)
+            if graph_data:
+                app.logger.info(f"Graph OBO succeeded for {identity['upn']} — returning live directory data.")
+                result = {
+                    "name": graph_data["first_name"],
+                    "full_name": graph_data["full_name"],
+                    "department": graph_data["department"] or "Unknown",
+                    "job_title": graph_data["job_title"],
+                    "office": graph_data["office"],
+                    "email": graph_data["email"],
+                    "manager": graph_data["manager"],
+                    "start_date": None,  # Graph doesn't expose hire date by default
+                    "source": "graph",
+                    "authenticated_as": {
+                        "oid": identity["user_oid"],
+                        "name": identity["name"],
+                        "upn": identity["upn"],
+                    },
+                }
+                return jsonify(result), 200
+            else:
+                app.logger.warning("Graph OBO failed — falling back to database record.")
+
+    # --- Attempt 2: Database fallback ---
     employee = db_session.query(Employee).filter_by(name=name.lower()).first()
     if not employee:
         return error_response(
@@ -150,9 +186,8 @@ def get_employee(name: str):
         )
 
     result = employee.to_dict()
+    result["source"] = "database"
 
-    # Enrich with caller identity when available (Entra ID mode only).
-    identity = get_caller_identity()
     if identity["via_entra"]:
         result["authenticated_as"] = {
             "oid": identity["user_oid"],
