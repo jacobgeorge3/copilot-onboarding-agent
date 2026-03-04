@@ -101,23 +101,33 @@ def _validate_bearer_token(token: str) -> Optional[dict]:
             f"https://sts.windows.net/{tenant_id}/",
         ]
 
-        last_exc = None
-        for issuer in valid_issuers:
-            try:
-                claims = jwt.decode(
-                    token,
-                    signing_key.key,
-                    algorithms=["RS256"],
-                    audience=client_id,
-                    issuer=issuer,
-                )
-                logger.debug(f"Token validated with issuer: {issuer}")
-                return claims
-            except Exception as exc:
-                last_exc = exc
-                continue
+        # Accept both audience formats — Power Platform issues tokens whose
+        # `aud` claim matches the Application ID URI (api://<client_id>) when
+        # the connector scope is set to `api://<client_id>/user_impersonation`.
+        # v1.0 tokens may carry just the bare GUID instead.
+        valid_audiences = [
+            f"api://{client_id}",
+            client_id,
+        ]
 
-        logger.warning(f"Bearer token validation failed against all issuers: {last_exc}")
+        last_exc = None
+        for audience in valid_audiences:
+            for issuer in valid_issuers:
+                try:
+                    claims = jwt.decode(
+                        token,
+                        signing_key.key,
+                        algorithms=["RS256"],
+                        audience=audience,
+                        issuer=issuer,
+                    )
+                    logger.debug(f"Token validated — audience: {audience}, issuer: {issuer}")
+                    return claims
+                except Exception as exc:
+                    last_exc = exc
+                    continue
+
+        logger.warning(f"Bearer token validation failed against all audiences/issuers: {last_exc}")
         return None
 
     except Exception as exc:
